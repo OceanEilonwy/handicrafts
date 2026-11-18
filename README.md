@@ -365,10 +365,11 @@ Everything lands in `/opt/nodo/apps/handicrafts/`; the device makes the shop's u
 firewall and web site from `packaging/nodo/srcpkgs/handicrafts/files/manifest.toml`. The app asks for
 internet access (Monokulo's API and the mail server) and an encrypted 128 MiB volume for the
 database. Its settings are the LuCI ones, one per `HANDICRAFTS_*` variable
-(`files/settings.lua`); secrets such as the admin password's hash and the Tuta password are sealed
-on the device. `/opt/nodo/apps/handicrafts/libexec/handicrafts hash-password` makes the hash. In
-Hosting, give the `shop` site the shop's public address; `/admin` stays reachable there, behind its
-own login, as on the router.
+(`files/settings.lua`); secrets such as the admin password and the Tuta password are sealed on the
+device. The admin password setting takes the password itself (the launcher hashes it at each start)
+or the router's argon2 hash. The site's local address is `handicrafts.local`; in Hosting, give it
+the shop's public address as well. `/admin` stays reachable there, behind its own login, as on the
+router.
 
 **Moving from the router.** The orders, the outbox and the Monokulo connection are all in the
 database, so the store stays connected:

@@ -40,7 +40,8 @@ fn the_manifest_passes_feed_validation_and_names_its_files() {
     assert_eq!(m.web.len(), 1);
     assert_eq!(m.web[0].upstream, "127.0.0.1:8082", "the launcher's --listen and the site agree");
     assert!(m.web[0].admin_paths.is_empty(), "/admin is public, as on the router, behind its own auth");
-    assert!(!m.web[0].multi_address, "pay links use the public address setting");
+    assert_eq!(m.web[0].suggested_subdomain.as_deref(), Some("handicrafts"), "the local address is handicrafts.local");
+    assert!(m.web[0].multi_address, "pages use relative links, so local and public at once");
     let p = Permissions::of(&m, &[]);
     assert!(p.granted.contains(&Permission::OutboundInternet));
     assert!(!p.granted.contains(&Permission::UnencryptedStorage));
@@ -89,7 +90,8 @@ fn settings_load_and_resolve_with_defaults_only() {
     };
     assert!(!with("public_url", Value::Url("https://shop.example.org/shop".into())).is_empty());
     assert!(!with("admin_email", Value::String("rachel".into())).is_empty());
-    assert!(!with("admin_password_hash", Value::Secret(SecretString::new("hunter2"))).is_empty());
+    assert!(!with("admin_password_hash", Value::Secret(SecretString::new("hunter2"))).is_empty(), "under 8 characters");
+    assert!(with("admin_password_hash", Value::Secret(SecretString::new("correct horse"))).is_empty(), "a password");
     assert!(!with("monokulo_secret_key", Value::Secret(SecretString::new("pk_wrong"))).is_empty());
     assert!(!with("mail", Value::Enum("sendmail".into())).is_empty());
     assert!(!with("bsb", Value::String("12345".into())).is_empty());
@@ -115,7 +117,12 @@ fn launch(args: &[&str], env: &[(&str, &str)]) -> Result<String, String> {
     let stand_in = libexec.join("handicrafts");
     std::fs::write(
         &stand_in,
-        "#!/bin/sh\nfor a do echo \"arg:$a\"; done\nenv | grep -E '^(HANDICRAFTS_|XDG_CACHE_HOME=)' | sort\n\
+        "#!/bin/sh\n\
+         if [ \"${1:-}\" = hash-password ]; then\n\
+           read -r p; [ ${#p} -ge 8 ] || { echo 'the password must be at least 8 characters' >&2; exit 1; }\n\
+           echo \"\\$argon2id\\$stub\\$$p\"; exit 0\n\
+         fi\n\
+         for a do echo \"arg:$a\"; done\nenv | grep -E '^(HANDICRAFTS_|XDG_CACHE_HOME=)' | sort\n\
          echo \"nodo:$(env | grep -c '^NODO_')\"\n",
     )
     .unwrap();
@@ -190,4 +197,17 @@ fn the_launcher_refuses_what_the_manifest_never_passes() {
     assert!(launch(&["--listen"], &[]).unwrap_err().contains("needs an address"));
     assert!(launch(&["--listen", "127.0.0.1:8082", "serve"], &[]).unwrap_err().contains("unexpected argument"));
     assert!(launch(&["--listen=127.0.0.1:9000"], &[]).unwrap().contains("HANDICRAFTS_LISTEN=127.0.0.1:9000\n"));
+}
+
+#[test]
+fn the_launcher_hashes_a_password_and_passes_a_hash_through() {
+    let hashed = launch(&LISTEN, &[("NODO_ADMIN_PASSWORD_HASH", "correct horse")]).unwrap();
+    assert!(hashed.lines().any(|l| l == "HANDICRAFTS_ADMIN_PASSWORD_HASH=$argon2id$stub$correct horse"), "{hashed}");
+    let from_router = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA";
+    let kept = launch(&LISTEN, &[("NODO_ADMIN_PASSWORD_HASH", from_router)]).unwrap();
+    assert!(kept.lines().any(|l| l == format!("HANDICRAFTS_ADMIN_PASSWORD_HASH={from_router}")), "{kept}");
+    let none = launch(&LISTEN, &[]).unwrap();
+    assert!(!none.contains("ADMIN_PASSWORD_HASH"), "/admin stays closed: {none}");
+    let short = launch(&LISTEN, &[("NODO_ADMIN_PASSWORD_HASH", "short")]).unwrap_err();
+    assert!(short.contains("could not be hashed"), "{short}");
 }

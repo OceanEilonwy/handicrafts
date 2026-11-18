@@ -4,7 +4,7 @@
 #
 # - The device passes package settings as NODO_<NAME> environment variables, and the shop reads
 #   HANDICRAFTS_<NAME>. Each setting is named after the variable it fills, so the mapping is a
-#   list. Secrets stay in the environment, never in argv.
+#   list. Secrets stay in the environment, never in argv. The admin password is hashed first.
 # - The shop reads its listening address from the environment, but the manifest's arguments are
 #   where the address lives, so it arrives as --listen.
 # - The database goes in the data directory, which the sandbox mounts as $HOME. Tern's Tuta SDK
@@ -56,6 +56,17 @@ for name in \
 	eval "value=\${NODO_$name-}"
 	[ -n "$value" ] && export "HANDICRAFTS_$name=$value"
 done
+# The admin password setting holds the password itself or, from the router, its argon2 hash. The
+# shop takes only a hash, so a password is hashed here, on every start (a new salt each time).
+case ${HANDICRAFTS_ADMIN_PASSWORD_HASH:-} in
+"" | \$argon2*) ;;
+*)
+	hash=$(printf '%s\n' "$HANDICRAFTS_ADMIN_PASSWORD_HASH" | "$(dirname "$0")/../libexec/handicrafts" hash-password) ||
+		die "the admin password could not be hashed"
+	export HANDICRAFTS_ADMIN_PASSWORD_HASH="$hash"
+	unset hash
+	;;
+esac
 # Keys pasted by hand count only once a Monokulo secret is set; the store is normally connected
 # at /admin/monokulo, which needs only the address. A public key alone would stop the start.
 if [ -n "${HANDICRAFTS_MONOKULO_SECRET_KEY:-}${HANDICRAFTS_MONOKULO_WEBHOOK_SECRET:-}" ] &&
