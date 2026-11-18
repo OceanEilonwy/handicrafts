@@ -1,0 +1,76 @@
+#!/bin/sh
+# Installed as bin/handicrafts. Adapts what monokulo-nodo provides to what the shop reads, then
+# becomes the shop.
+#
+# - The device passes package settings as NODO_<NAME> environment variables, and the shop reads
+#   HANDICRAFTS_<NAME>. Each setting is named after the variable it fills, so the mapping is a
+#   list. Secrets stay in the environment, never in argv.
+# - The shop reads its listening address from the environment, but the manifest's arguments are
+#   where the address lives, so it arrives as --listen.
+# - The database goes in the data directory, which the sandbox mounts as $HOME. Tern's Tuta SDK
+#   caches Tuta's type models in $HOME/cache, so a start skips downloading them.
+# - The device's proxy reaches the shop on loopback, so only 127.0.0.1's X-Forwarded-For is
+#   believed for the spam limits.
+#
+# This script keeps the name of the binary it starts, so the supervisor's `pkill -x handicrafts`
+# matches whichever of the two is running.
+set -eu
+
+die() {
+	echo "handicrafts launcher: $*" >&2
+	exit 1
+}
+
+[ -n "${HOME:-}" ] && [ -d "$HOME" ] || die "HOME is not the data directory"
+
+# The shop itself takes no arguments to serve, so --listen is the only one there can be.
+listen=
+while [ $# -gt 0 ]; do
+	case $1 in
+	--listen)
+		[ $# -ge 2 ] || die "--listen needs an address"
+		listen=$2
+		shift 2
+		;;
+	--listen=*)
+		listen=${1#--listen=}
+		shift
+		;;
+	*) die "unexpected argument: $1" ;;
+	esac
+done
+[ -n "$listen" ] || die "no --listen was given"
+
+# Anything the shop would read that the device did not set comes from nowhere.
+for name in $(env | sed -n 's/^\(HANDICRAFTS_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+
+for name in \
+	PUBLIC_URL ADMIN_USER ADMIN_PASSWORD_HASH ADMIN_EMAIL \
+	MAIL MAIL_FROM MAIL_FROM_NAME TUTA_USER TUTA_PASSWORD \
+	SMTP_HOST SMTP_PORT SMTP_SECURITY SMTP_USER SMTP_PASSWORD \
+	PAYID BANK_ACCOUNT_NAME BSB ACCOUNT_NUMBER \
+	MONOKULO_URL MONOKULO_SECRET_KEY MONOKULO_WEBHOOK_SECRET \
+	LIMIT_IP_10MIN LIMIT_IP_DAY LIMIT_EMAIL_DAY LIMIT_SHOP_DAY; do
+	eval "value=\${NODO_$name-}"
+	[ -n "$value" ] && export "HANDICRAFTS_$name=$value"
+done
+# Keys pasted by hand count only once a Monokulo secret is set; the store is normally connected
+# at /admin/monokulo, which needs only the address. A public key alone would stop the start.
+if [ -n "${HANDICRAFTS_MONOKULO_SECRET_KEY:-}${HANDICRAFTS_MONOKULO_WEBHOOK_SECRET:-}" ] &&
+	[ -n "${NODO_MONOKULO_PUBLIC_KEY:-}" ]; then
+	export HANDICRAFTS_MONOKULO_PUBLIC_KEY="$NODO_MONOKULO_PUBLIC_KEY"
+fi
+unset value
+
+for name in $(env | sed -n 's/^\(NODO_[A-Z0-9_]*\)=.*/\1/p'); do
+	unset "$name"
+done
+
+export HANDICRAFTS_LISTEN="$listen"
+export HANDICRAFTS_DATA_DIR="$HOME"
+export HANDICRAFTS_TRUSTED_PROXIES=127.0.0.1
+export XDG_CACHE_HOME="$HOME/cache"
+
+exec "$(dirname "$0")/../libexec/handicrafts"
