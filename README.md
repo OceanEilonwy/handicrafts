@@ -53,6 +53,8 @@ data/products.json   ← THE FILE YOU EDIT to add/change/remove products
 data/recipes.json    ← THE FILE YOU EDIT to add/change/remove recipes
 
 openwrt/             The OpenWrt package: Makefile, init script, UCI defaults, LuCI page, rpcd backend
+packaging/nodo/      The monokulo-nodo feed app: recipe, manifest, settings, launcher, its test, and
+                     the feed's key and package list (see "Running on monokulo-nodo")
 scripts/             build-openwrt.sh (the .apk), test-openwrt.sh (installs it in OpenWrt) and
                      test-browser.sh (the whole flow in a real browser, tests/browser/flow.mjs)
 
@@ -347,6 +349,82 @@ that signs Monokulo's packages). Every push to master also publishes the signed 
 GitHub Pages, so the router can `apk upgrade`. Pages used to serve the shop itself, so the first push
 replaces the old static shop there: point the domain at the router and remove the custom domain under
 Settings › Pages before that.
+
+## Running on monokulo-nodo
+
+The shop is also a feed app for [monokulo-nodo](https://github.com/OceanEilonwy/monokulo-nodo), from
+its own signed feed (not nodo's, since only this shop runs it):
+
+```
+Feed:        https://github.com/OceanEilonwy/handicrafts/releases/download/feed
+Fingerprint: 6a:ac:ee:8e:50:30:45:e6:2f:f8:29:f3:36:79:4e:93
+```
+
+Add the feed on the device (compare the fingerprint it shows), then install `handicrafts` from it.
+Everything lands in `/opt/nodo/apps/handicrafts/`; the device makes the shop's user, sandbox,
+firewall and web site from `packaging/nodo/srcpkgs/handicrafts/files/manifest.toml`. The app asks for
+internet access (Monokulo's API and the mail server) and an encrypted 128 MiB volume for the
+database. Its settings are the LuCI ones, one per `HANDICRAFTS_*` variable
+(`files/settings.lua`); secrets such as the admin password's hash and the Tuta password are sealed
+on the device. `/opt/nodo/apps/handicrafts/libexec/handicrafts hash-password` makes the hash. In
+Hosting, give the `shop` site the shop's public address; `/admin` stays reachable there, behind its
+own login, as on the router.
+
+**Moving from the router.** The orders, the outbox and the Monokulo connection are all in the
+database, so the store stays connected:
+
+1. On the router, `/etc/init.d/handicrafts stop`. A clean stop folds the write-ahead log into
+   `handicrafts.db`.
+2. Install the app on the nodo and fill in its settings from `/etc/config/handicrafts` and the files
+   in `/etc/handicrafts/secrets/`.
+3. On the nodo, `sv down handicrafts`, copy the router's `/srv/handicrafts/handicrafts.db` (and
+   `handicrafts.db-wal` if one is left) to `/run/nodo/volumes/handicrafts/data/`,
+   `chown _handicrafts:_handicrafts` and `chmod 600` it, then `sv up handicrafts`.
+4. Move the site to the nodo, then `/etc/init.d/handicrafts disable` on the router.
+
+**The feed.** `.github/workflows/feed.yml` builds both architectures in nodo's xbps-src builder (at
+the commit `NODO_REV`), signs them, runs nodo's own install review on each, and publishes them as
+the assets of the release `feed`. It runs by hand (Actions › feed › Run workflow on `master`) or on a
+pushed `feed-*` tag; pull requests that touch the packaging run only its test. Every commit is a new
+version: the crate version and the commit count, such as `0.2.2.33`.
+
+- `scripts/nodo-dist.sh` makes the source it builds from: `git archive` of a commit plus
+  `cargo vendor`, so the build needs no network, and the recipe with the version and checksum filled
+  in, all in `target/nodo/`.
+- `scripts/test-nodo-package.sh ../monokulo-nodo` checks the manifest, settings and launcher with
+  nodo's own parsers (`packaging/nodo/tests/handicrafts_package.rs`, run inside a nodo checkout).
+- To build locally, as the workflow does:
+
+  ```bash
+  scripts/nodo-dist.sh   # prints version=… and commit=…
+  mkdir -p ../monokulo-nodo/build/hostdir/sources/handicrafts-<version>
+  cp target/nodo/handicrafts-*.tar.gz ../monokulo-nodo/build/hostdir/sources/handicrafts-<version>/
+  NODO_EXTRA_PACKAGES="$PWD/target/nodo/srcpkgs" FEED_PACKAGES="$PWD/packaging/nodo/feed-packages" \
+    ../monokulo-nodo/scripts/publish-feed.sh build aarch64
+  ```
+
+**Key and one-time setup.** RSA 4096, signer name `handicrafts feed`, the fingerprint above. The
+public key is `packaging/nodo/feed-signing-key.pub.pem`; the private key is kept offline by the
+owner (`~/.config/handicrafts/keys/feed/handicrafts-feed.pem`) and as the
+`HANDICRAFTS_FEED_SIGNING_KEY` secret of the `feed` environment:
+
+```bash
+# The environment that holds the key, deployable from master and feed-* tags only.
+gh api -X PUT repos/OceanEilonwy/handicrafts/environments/feed --input - <<'EOF'
+{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+EOF
+gh api -X POST repos/OceanEilonwy/handicrafts/environments/feed/deployment-branch-policies \
+  -f name=master -f type=branch
+gh api -X POST repos/OceanEilonwy/handicrafts/environments/feed/deployment-branch-policies \
+  -f name='feed-*' -f type=tag
+# The key, straight from the file.
+gh secret set HANDICRAFTS_FEED_SIGNING_KEY --repo OceanEilonwy/handicrafts --env feed \
+  < ~/.config/handicrafts/keys/feed/handicrafts-feed.pem
+# The release whose assets are the feed.
+gh release create feed --repo OceanEilonwy/handicrafts --target master --latest=false \
+  --title "Handicrafts feed for monokulo-nodo" \
+  --notes "Signed xbps feed. Address: https://github.com/OceanEilonwy/handicrafts/releases/download/feed  Key fingerprint: 6a:ac:ee:8e:50:30:45:e6:2f:f8:29:f3:36:79:4e:93"
+```
 
 ## Making a change later
 

@@ -1,0 +1,35 @@
+api_version = 1
+id = "handicrafts"
+version = "@VERSION@"
+# bin/handicrafts is a small launcher (files/launcher) that maps the device's settings onto the
+# shop's HANDICRAFTS_* variables, puts its database in the data directory, and then executes
+# libexec/handicrafts under the same name.
+exec = [
+    "bin/handicrafts",
+    "--listen", "127.0.0.1:8082",
+]
+settings = "settings.lua"
+# The SQLite write-ahead log and an email being sent get time to finish.
+stop_timeout_secs = 15
+health = { http = { url = "http://127.0.0.1:8082/" } }
+
+[storage]
+# Orders hold customers' names, addresses and email addresses; the outbox holds their emails.
+encrypted = true
+size_mib = 128
+
+[network]
+# Monokulo's API (pay links and connecting the store) and the mail server or Tuta are on the
+# internet.
+outbound = "internet"
+
+[[web]]
+name = "shop"
+upstream = "127.0.0.1:8082"
+suggested_subdomain = "www"
+# /admin stays reachable from the public address, as it is on the router: it has its own Basic
+# auth and CSRF checks, and connecting the store to Monokulo returns the browser to
+# <public address>/admin/monokulo/return.
+#
+# Pay links in emails and invoices use the public address setting, so the shop is tied to it.
+multi_address = false

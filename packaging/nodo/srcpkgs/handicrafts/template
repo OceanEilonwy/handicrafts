@@ -1,0 +1,124 @@
+# Template file for 'handicrafts'
+#
+# Rachel's Handicrafts as a monokulo-nodo feed app: the shop (axum, maud, SQLite), which takes
+# orders, emails them and hands out Monokulo pay links. Everything lands in
+# /opt/nodo/apps/handicrafts/; the device makes the user, sandbox, firewall and web site from
+# files/manifest.toml. Its pages, styles and catalogue are compiled in.
+#
+# This file is a template of the template: scripts/nodo-dist.sh fills in the version, commit and
+# source checksum placeholders and writes the result to target/nodo/srcpkgs/, next to the source
+# tarball it describes. Build from there, never from packaging/nodo/srcpkgs/ directly.
+#
+# The source is `git archive` of one commit plus `cargo vendor` output (Tern and Tuta's SDK
+# included) and a .cargo/config.toml that points cargo at it, so the build needs no network.
+# nodo-dist.sh's tarball goes where xbps-src looks before fetching
+# (hostdir/sources/handicrafts-<version>/); the URL below is where the feed workflow publishes
+# the same file, the corresponding source the GPL asks for.
+#
+# The Rust toolchain is the one Pingers' feed pins, so both feeds share its distfiles.
+pkgname=handicrafts
+version=@VERSION@
+revision=1
+_commit=@COMMIT@
+_rust=1.98.1
+archs="aarch64 x86_64"
+# cmake and clang: aws-lc-rs (rustls, through Tern). xz: the Rust toolchain distfiles.
+hostmakedepends="gcc cmake make perl pkg-config clang xz"
+short_desc="Rachel's Handicrafts shop for monokulo-nodo: orders, emails and payments"
+maintainer="Rachel's Handicrafts <noreply@localhost>"
+# Tern and Tuta's SDK are GPL-3.0 and linked in. Nothing is installed under /usr/share/licenses
+# because a feed package may only write inside its own directory.
+license="GPL-3.0-only"
+homepage="https://github.com/OceanEilonwy/handicrafts"
+
+_dist=https://static.rust-lang.org/dist
+case "$XBPS_MACHINE" in
+	x86_64)
+		_host=x86_64-unknown-linux-gnu
+		_rustc_sum=e974f036b28565f37c0f3bd92ddefa809bee16c04f9dcf07b9ed96e05aaaf7c4
+		_cargo_sum=ea1de9f9e23107d97ee2b41a72c552f34064a593da503789218387aee59f3ba4
+		_std_sum=fa3ff450172a16c026944030230c5069947af93c728d9179971d44e5e0cfb561
+		;;
+	aarch64)
+		_host=aarch64-unknown-linux-gnu
+		_rustc_sum=89fb83041993b48816514815606f53a5264729b8b449671a6b291e6f0ae74f40
+		_cargo_sum=c09425a7f300af148c0bdfded0e7d5f1fe7c075b2b9674e8935afa769297b2f6
+		_std_sum=9bf796a6ec5b004813ebd0b650775a7c6a4f3aae97ad362ae294798dca4f3b23
+		;;
+	*) broken="no pinned toolchain for build machine $XBPS_MACHINE" ;;
+esac
+
+distfiles="https://github.com/OceanEilonwy/handicrafts/releases/download/feed/handicrafts-${_commit}.tar.gz
+ ${_dist}/rustc-${_rust}-${_host}.tar.xz
+ ${_dist}/cargo-${_rust}-${_host}.tar.xz
+ ${_dist}/rust-std-${_rust}-${_host}.tar.xz"
+checksum="@SOURCE_SHA256@
+ ${_rustc_sum}
+ ${_cargo_sum}
+ ${_std_sum}"
+
+# A cross build also needs the target's standard library.
+if [ "$CROSS_BUILD" ] && [ "$XBPS_TARGET_MACHINE" = aarch64 ]; then
+	distfiles+=" ${_dist}/rust-std-${_rust}-aarch64-unknown-linux-gnu.tar.xz"
+	checksum+=" 9bf796a6ec5b004813ebd0b650775a7c6a4f3aae97ad362ae294798dca4f3b23"
+elif [ "$CROSS_BUILD" ] && [ "$XBPS_TARGET_MACHINE" = x86_64 ]; then
+	distfiles+=" ${_dist}/rust-std-${_rust}-x86_64-unknown-linux-gnu.tar.xz"
+	checksum+=" fa3ff450172a16c026944030230c5069947af93c728d9179971d44e5e0cfb561"
+fi
+
+build_wrksrc="handicrafts-${_commit}"
+_app=opt/nodo/apps/handicrafts
+
+post_extract() {
+	local d
+	mkdir -p "${wrksrc}/toolchain"
+	for d in "${wrksrc}"/rustc-${_rust}-* "${wrksrc}"/cargo-${_rust}-* "${wrksrc}"/rust-std-${_rust}-*; do
+		[ -d "$d" ] || continue
+		"$d"/install.sh --prefix="${wrksrc}/toolchain" --disable-ldconfig >/dev/null
+	done
+}
+
+_toolchain_env() {
+	_tc="${wrksrc}/toolchain"
+	export PATH="${_tc}/bin:${PATH}"
+	export RUSTC="${_tc}/bin/rustc"
+	export CARGO="${_tc}/bin/cargo"
+	# Every crate is in the tarball's cargo-vendor/; nothing is downloaded.
+	export CARGO_HOME="${wrksrc}/.cargo-home"
+	export CARGO_NET_OFFLINE=true
+	export CARGO_BUILD_JOBS="${XBPS_MAKEJOBS}"
+	export HOST_CC=gcc HOST_CXX=g++
+	local t="${RUST_TARGET^^}" b="${RUST_BUILD^^}"
+	t="${t//-/_}"
+	b="${b//-/_}"
+	if [ "$CROSS_BUILD" ]; then
+		unset RUSTFLAGS
+		export "CARGO_TARGET_${b}_LINKER=gcc"
+		export PKG_CONFIG_ALLOW_CROSS=1
+	fi
+	export "CARGO_TARGET_${t}_LINKER=${CC}"
+}
+
+do_configure() {
+	_toolchain_env
+	"${RUSTC}" -vV
+}
+
+do_build() {
+	_toolchain_env
+	"${CARGO}" build --release --locked --offline --target "${RUST_TARGET}" --bin handicrafts
+}
+
+# The binary in libexec/, the launcher (which keeps the binary's name, so the supervisor's
+# `pkill -x handicrafts` matches whichever is running) in bin/, the manifest and settings beside
+# them.
+do_install() {
+	vmkdir ${_app}/bin 755
+	vmkdir ${_app}/libexec 755
+	install -m 755 "target/${RUST_TARGET}/release/handicrafts" "${DESTDIR}/${_app}/libexec/handicrafts"
+	install -m 755 "${FILESDIR}/launcher" "${DESTDIR}/${_app}/bin/handicrafts"
+	install -m 644 "${FILESDIR}/manifest.toml" "${DESTDIR}/${_app}/manifest.toml"
+	# Split so nodo-dist.sh, which fills every version placeholder in this file, leaves it alone.
+	sed -i "s/@""VERSION@/${version}/" "${DESTDIR}/${_app}/manifest.toml"
+	install -m 644 "${FILESDIR}/settings.lua" "${DESTDIR}/${_app}/settings.lua"
+}
