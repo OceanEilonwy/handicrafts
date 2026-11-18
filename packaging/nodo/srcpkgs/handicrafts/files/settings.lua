@@ -47,14 +47,15 @@ return {
       end,
     },
     {
+      -- Named for the variable it fills: bin/handicrafts hashes a password before the shop sees it.
       name = "admin_password_hash",
       type = "secret",
-      label = "Admin password hash",
-      help = "The argon2 hash of /admin's password. Make one over SSH with "
-        .. "/opt/nodo/apps/handicrafts/libexec/handicrafts hash-password, typing the password "
-        .. "on its input. Until it is set, /admin stays closed.",
-      validate = function(hash)
-        return nodo.matches(hash, "^\\$argon2(id|i|d)\\$[^ ]+$"), "must be an argon2 hash ($argon2id$...)"
+      label = "Admin password",
+      help = "The password for /admin, at least 8 characters. An argon2 hash of it, such as the "
+        .. "router's, works too. Until it is set, /admin stays closed.",
+      validate = function(password)
+        return nodo.matches(password, "^\\$argon2(id|i|d)\\$[^ ]+$") or nodo.matches(password, "^.{8,}$"),
+          "must be at least 8 characters, or an argon2 hash"
       end,
     },
     {

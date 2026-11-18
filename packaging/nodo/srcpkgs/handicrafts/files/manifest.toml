@@ -26,10 +26,12 @@ outbound = "internet"
 [[web]]
 name = "shop"
 upstream = "127.0.0.1:8082"
-suggested_subdomain = "www"
+# The local address is handicrafts.local; the public one is whatever the owner gives the site.
+suggested_subdomain = "handicrafts"
 # /admin stays reachable from the public address, as it is on the router: it has its own Basic
 # auth and CSRF checks, and connecting the store to Monokulo returns the browser to
 # <public address>/admin/monokulo/return.
 #
-# Pay links in emails and invoices use the public address setting, so the shop is tied to it.
-multi_address = false
+# Pages use relative links, so the shop works at any of its addresses. Only links in emails,
+# invoices and the Monokulo webhook use the public address setting.
+multi_address = true
