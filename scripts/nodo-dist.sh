@@ -26,6 +26,11 @@ crate=$(git -C "$root" show "$commit:Cargo.toml" | sed -n 's/^version = "\([^"]*
 	echo "nodo-dist: no version in Cargo.toml at $commit" >&2
 	exit 1
 }
+# A shallow clone would count only the commits it has, and every build would get the same version.
+if [ "$(git -C "$root" rev-parse --is-shallow-repository)" = true ]; then
+	echo "nodo-dist: $root is a shallow clone; the version counts commits, so fetch the whole history" >&2
+	exit 1
+fi
 count=$(git -C "$root" rev-list --count "$commit")
 version=$crate.$count
 when=$(git -C "$root" show -s --format=%ct "$commit")
